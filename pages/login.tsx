@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
-import { auth } from '@/lib/firebase'
-import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth'
+import { auth, firebaseConfigError, googleProvider } from '@/lib/firebase'
+import { signInWithPopup, signInWithRedirect } from 'firebase/auth'
 import { useAuth } from '@/lib/auth-context'
 import Head from 'next/head'
 import Link from 'next/link'
 
 export default function Login() {
-  const { user, profile, loading, blocked } = useAuth()
+  const { user, profile, loading, blocked, configError } = useAuth()
   const router = useRouter()
   const [signing, setSigning] = useState(false)
+  const [signInError, setSignInError] = useState('')
 
   useEffect(() => {
     if (!loading && user && profile) {
@@ -19,10 +20,34 @@ export default function Login() {
   }, [user, profile, loading])
 
   async function signIn() {
+    if (!auth) {
+      setSignInError(configError || firebaseConfigError || 'Firebase auth is not available.')
+      return
+    }
+
     setSigning(true)
-    try { await signInWithPopup(auth, new GoogleAuthProvider()) }
-    catch (e: any) { if (e.code !== 'auth/popup-closed-by-user') console.error(e) }
-    setSigning(false)
+    setSignInError('')
+    try {
+      await signInWithPopup(auth, googleProvider)
+    } catch (e: any) {
+      if (e?.code === 'auth/popup-closed-by-user') return
+
+      if (e?.code === 'auth/popup-blocked' || e?.code === 'auth/cancelled-popup-request' || e?.code === 'auth/operation-not-supported-in-this-environment') {
+        try {
+          await signInWithRedirect(auth, googleProvider)
+          return
+        } catch (redirectError: any) {
+          console.error(redirectError)
+          setSignInError(redirectError?.message || 'Google redirect sign-in failed. Check your Firebase auth setup and try again.')
+          return
+        }
+      }
+
+      console.error(e)
+      setSignInError(e?.message || 'Sign-in failed. Check your Firebase auth setup and try again.')
+    } finally {
+      setSigning(false)
+    }
   }
 
   if (loading) return <div style={{minHeight:'100vh',background:'#0c0c0c',display:'flex',alignItems:'center',justifyContent:'center'}}><div className="spinner"/></div>
@@ -53,7 +78,19 @@ export default function Login() {
               </div>
             )}
 
-            <button onClick={signIn} disabled={signing}
+            {signInError && (
+              <div style={{ background:'rgba(248,113,113,0.08)', border:'1px solid rgba(248,113,113,0.2)', borderRadius:12, padding:'14px 16px', marginBottom:20, fontSize:13, color:'#f87171', lineHeight:1.6 }}>
+                <strong>Sign-in failed.</strong> {signInError}
+              </div>
+            )}
+
+            {(configError || firebaseConfigError) && (
+              <div style={{ background:'rgba(251,191,36,0.08)', border:'1px solid rgba(251,191,36,0.25)', borderRadius:12, padding:'14px 16px', marginBottom:20, fontSize:13, color:'#fbbf24', lineHeight:1.6 }}>
+                <strong>Firebase setup needed.</strong> Add the missing <code style={{color:'#fde68a'}}>NEXT_PUBLIC_FIREBASE_*</code> values in <code style={{color:'#fde68a'}}>.env.local</code> before logging in.
+              </div>
+            )}
+
+            <button onClick={signIn} disabled={signing || !!(configError || firebaseConfigError)}
               style={{ width:'100%', display:'flex', alignItems:'center', justifyContent:'center', gap:10, padding:'13px 16px', background:'#fff', borderRadius:11, border:'none', fontSize:14, fontWeight:700, color:'#000', cursor:'pointer', opacity:signing?0.7:1 }}>
               <svg width="18" height="18" viewBox="0 0 18 18">
                 <path fill="#4285F4" d="M16.51 8H8.98v3h4.3c-.18 1-.74 1.84-1.57 2.4v2h2.54c1.5-1.38 2.36-3.4 2.36-5.76 0-.55-.05-1.09-.1-1.64z"/>
