@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/router'
-import { db, auth } from '@/lib/firebase'
-import { signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth'
+import { db, auth, firebaseConfigError, googleProvider } from '@/lib/firebase'
+import { signInWithPopup, signInWithRedirect, signOut } from 'firebase/auth'
 import { collection, getDocs, query, where, orderBy, doc, getDoc } from 'firebase/firestore'
 import { useAuth } from '@/lib/auth-context'
 import { fmtN, fmtC, fmtDate, getLatestValuation, computeVesting, computeVestingStatus } from '@/lib/utils'
@@ -18,10 +18,30 @@ export default function EmployeePortal() {
   const [signing, setSigning] = useState(false)
 
   async function handleSignIn() {
+    if (!auth) {
+      setErr(firebaseConfigError || 'Firebase auth is not available.')
+      return
+    }
+
     setSigning(true); setErr('')
-    try { await signInWithPopup(auth, new GoogleAuthProvider()) }
-    catch (e: any) { if (e.code !== 'auth/popup-closed-by-user') setErr('Sign-in failed. Try again.') }
-    setSigning(false)
+    try {
+      await signInWithPopup(auth, googleProvider)
+    } catch (e: any) {
+      if (e?.code === 'auth/popup-closed-by-user') return
+      if (e?.code === 'auth/popup-blocked' || e?.code === 'auth/cancelled-popup-request' || e?.code === 'auth/operation-not-supported-in-this-environment') {
+        try {
+          await signInWithRedirect(auth, googleProvider)
+          return
+        } catch (redirectError: any) {
+          console.error(redirectError)
+          setErr(redirectError?.message || 'Google redirect sign-in failed. Check your Firebase auth setup and try again.')
+          return
+        }
+      }
+      setErr(e?.message || 'Sign-in failed. Check your Firebase auth setup and try again.')
+    } finally {
+      setSigning(false)
+    }
   }
 
   useEffect(() => {
@@ -81,7 +101,8 @@ export default function EmployeePortal() {
               Sign in with the Google account linked to your company email to view your ESOP grants.
             </p>
             {err&&<div style={{background:'rgba(248,113,113,0.08)',border:'1px solid rgba(248,113,113,0.2)',borderRadius:10,padding:'12px 14px',marginBottom:16,fontSize:12,color:'#f87171'}}>{err}</div>}
-            <button onClick={handleSignIn} disabled={signing}
+            {firebaseConfigError && <div style={{background:'rgba(251,191,36,0.08)',border:'1px solid rgba(251,191,36,0.25)',borderRadius:10,padding:'12px 14px',marginBottom:16,fontSize:12,color:'#fbbf24',lineHeight:1.6}}><strong>Firebase setup needed.</strong> Add the missing <code style={{color:'#fde68a'}}>NEXT_PUBLIC_FIREBASE_*</code> values in <code style={{color:'#fde68a'}}>.env.local</code> before employees can sign in.</div>}
+            <button onClick={handleSignIn} disabled={signing || !!firebaseConfigError}
               style={{width:'100%',display:'flex',alignItems:'center',justifyContent:'center',gap:10,padding:'13px 16px',background:'#fff',borderRadius:10,border:'none',fontSize:14,fontWeight:700,color:'#000',cursor:'pointer',opacity:signing?0.7:1}}>
               <svg width="18" height="18" viewBox="0 0 18 18">
                 <path fill="#4285F4" d="M16.51 8H8.98v3h4.3c-.18 1-.74 1.84-1.57 2.4v2h2.54c1.5-1.38 2.36-3.4 2.36-5.76 0-.55-.05-1.09-.1-1.64z"/>
