@@ -1,9 +1,9 @@
-import { initializeApp, getApps } from 'firebase/app'
-import { getAuth, GoogleAuthProvider } from 'firebase/auth'
-import { getFirestore } from 'firebase/firestore'
-import { getStorage } from 'firebase/storage'
+import { initializeApp, getApps, FirebaseApp } from 'firebase/app'
+import { getAuth, GoogleAuthProvider, Auth } from 'firebase/auth'
+import { getFirestore, Firestore } from 'firebase/firestore'
+import { getStorage, FirebaseStorage } from 'firebase/storage'
 
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey:            process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
   authDomain:        process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
   projectId:         process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
@@ -12,9 +12,19 @@ const firebaseConfig = {
   appId:             process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 }
 
-const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig)
+const missingKeys = Object.entries(firebaseConfig)
+  .filter(([, value]) => !value)
+  .map(([key]) => key)
 
-export const auth          = getAuth(app)
-export const db            = getFirestore(app)
-export const storage       = getStorage(app)
+export const firebaseConfigError = missingKeys.length
+  ? `Firebase is not configured. Missing: ${missingKeys.join(', ')}`
+  : ''
+
+export const app: FirebaseApp | null = firebaseConfigError
+  ? null
+  : (getApps().length ? getApps()[0] : initializeApp(firebaseConfig))
+
+export const auth: Auth | null = app ? getAuth(app) : null
+export const db: Firestore | null = app ? getFirestore(app) : null
+export const storage: FirebaseStorage | null = app ? getStorage(app) : null
 export const googleProvider = new GoogleAuthProvider()
