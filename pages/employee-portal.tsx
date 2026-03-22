@@ -50,7 +50,9 @@ export default function EmployeePortal() {
     if (['admin','editor','viewer'].includes(profile.role)) {
       router.replace('/dashboard'); return
     }
-    if (profile.role === 'employee' && profile.employeeId) loadData(profile.employeeId)
+    if (profile.role === 'employee') {
+  setErr('Employee portal is under setup')
+} loadData(profile.employeeId)
     else setErr('Your email is not linked to an employee record. Contact HR.')
   }, [user, profile, loading])
 
