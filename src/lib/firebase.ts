@@ -20,7 +20,7 @@ export const firebaseConfigError = missingKeys.length
   ? `Firebase is not configured. Missing: ${missingKeys.join(', ')}`
   : ''
 
-export const app: FirebaseApp | null = firebaseConfigError
+const app: FirebaseApp | null = firebaseConfigError
   ? null
   : (getApps().length ? getApps()[0] : initializeApp(firebaseConfig))
 
