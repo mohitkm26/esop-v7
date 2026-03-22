@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import { auth, db, firebaseConfigError } from './firebase'
 import { onAuthStateChanged, User, signOut } from 'firebase/auth'
-import { doc, getDoc } from 'firebase/firestore'
+import { doc, getDoc, setDoc, getDocs, collection, query, where, updateDoc } from 'firebase/firestore'
 
 export interface Profile {
   uid: string
@@ -25,15 +25,10 @@ interface AuthCtx {
 const Ctx = createContext<AuthCtx>({ user: null, profile: null, loading: true, blocked: false, configError: firebaseConfigError })
 export const useAuth = () => useContext(Ctx)
 
-function normalizeRole(role?: string): Profile['role'] {
-  if (role === 'companyAdmin' || role === 'admin') return 'admin'
-  if (role === 'editor') return 'editor'
-  if (role === 'employee') return 'employee'
-  return 'viewer'
-}
+const normalizeEmail = (email?: string | null) => email?.trim().toLowerCase() || ''
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
+  const [user, setUser]       = useState<User | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
   const [blocked, setBlocked] = useState(false)
@@ -48,66 +43,89 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    async function blockCurrentUser() {
-      await signOut(auth)
-      setUser(null)
-      setProfile(null)
-      setBlocked(true)
-      setLoading(false)
-    }
-
-    return onAuthStateChanged(auth, async currentUser => {
-      setUser(currentUser)
+    return onAuthStateChanged(auth, async u => {
+      setUser(u)
       setBlocked(false)
 
-      if (!currentUser) {
-        setProfile(null)
-        setLoading(false)
-        return
-      }
+      if (!u) { setProfile(null); setLoading(false); return }
 
       try {
-        await currentUser.reload()
-        const verifiedUser = auth.currentUser || currentUser
-
-        if (!verifiedUser.emailVerified) {
-          await blockCurrentUser()
-          return
+        const email = normalizeEmail(u.email)
+        if (!email) {
+          await signOut(auth)
+          setUser(null); setProfile(null); setBlocked(true)
+          setLoading(false); return
         }
 
-        const userSnap = await getDoc(doc(db, 'users', verifiedUser.uid))
-        if (!userSnap.exists()) {
-          await blockCurrentUser()
-          return
+        const profileRef  = doc(db, 'profiles', u.uid)
+        const profileSnap = await getDoc(profileRef)
+
+        if (profileSnap.exists()) {
+          const existing = profileSnap.data() as Profile
+          if (!existing.isActive) {
+            await signOut(auth)
+            setUser(null); setProfile(null); setBlocked(true)
+            setLoading(false); return
+          }
+          setProfile(existing); setLoading(false); return
         }
 
-        const userData = userSnap.data() as {
-          email?: string
-          role?: string
-          companyId?: string
-          isActive?: boolean
+        const allProfiles = await getDocs(collection(db, 'profiles'))
+        if (allProfiles.empty) {
+          const p: Profile = {
+            uid: u.uid, email, name: u.displayName || email,
+            photo: u.photoURL || '', role: 'admin', isActive: true,
+          }
+          await setDoc(profileRef, { ...p, emailLower: email, createdAt: new Date().toISOString() })
+          setProfile(p); setLoading(false); return
         }
 
-        if (userData.isActive === false) {
-          await blockCurrentUser()
-          return
+        const directInviteSnap = await getDocs(
+          query(collection(db, 'invites'), where('email', '==', email))
+        )
+        let inviteDoc = directInviteSnap.docs[0] || null
+        if (!inviteDoc) {
+          const allInvites = await getDocs(collection(db, 'invites'))
+          inviteDoc = allInvites.docs.find(d => normalizeEmail(d.data().email) === email) || null
+        }
+        if (inviteDoc) {
+          const invite = inviteDoc.data()
+          const p: Profile = {
+            uid: u.uid, email, name: u.displayName || email,
+            photo: u.photoURL || '', role: invite.role || 'viewer', isActive: true,
+            ...(invite.employeeId ? { employeeId: invite.employeeId } : {}),
+          }
+          await setDoc(profileRef, { ...p, emailLower: email, createdAt: new Date().toISOString() })
+          await updateDoc(inviteDoc.ref, { email, emailLower: email, used: true, usedAt: new Date().toISOString(), usedBy: u.uid })
+          setProfile(p); setLoading(false); return
         }
 
-        setUser(verifiedUser)
-        setProfile({
-          uid: verifiedUser.uid,
-          email: userData.email || verifiedUser.email || '',
-          name: verifiedUser.displayName || userData.email || verifiedUser.email || '',
-          photo: verifiedUser.photoURL || '',
-          role: normalizeRole(userData.role),
-          isActive: true,
-          companyId: userData.companyId,
-        })
+        const directEmployeeMatches = await Promise.all([
+          getDocs(query(collection(db, 'employees'), where('officialEmail', '==', email))),
+          getDocs(query(collection(db, 'employees'), where('personalEmail', '==', email))),
+        ])
+        let matchedEmp = [...directEmployeeMatches[0].docs, ...directEmployeeMatches[1].docs][0] || null
+        if (!matchedEmp) {
+          const allEmployees = await getDocs(collection(db, 'employees'))
+          matchedEmp = allEmployees.docs.find(d => {
+            const data = d.data() as any
+            return normalizeEmail(data.officialEmail) === email || normalizeEmail(data.personalEmail) === email
+          }) || null
+        }
+        if (matchedEmp) {
+          const p: Profile = {
+            uid: u.uid, email, name: u.displayName || email,
+            photo: u.photoURL || '', role: 'employee', isActive: true,
+            employeeId: matchedEmp.id,
+          }
+          await setDoc(profileRef, { ...p, emailLower: email, createdAt: new Date().toISOString() })
+          setProfile(p); setLoading(false); return
+        }
+
+        await signOut(auth)
+        setUser(null); setProfile(null); setBlocked(true)
       } catch (e) {
         console.error('Auth error:', e)
-        setUser(null)
-        setProfile(null)
-        setBlocked(true)
       }
 
       setLoading(false)
