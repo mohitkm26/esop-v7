@@ -74,12 +74,16 @@ export default function UsersPage() {
     setInvSaving(true); setInvMsg('')
     try {
       // Check not already invited or registered
-      const existing = await getDocs(query(collection(db,'invites'),where('email','==',email)))
-      const existUser = await getDocs(query(collection(db,'profiles'),where('email','==',email)))
-      if (!existing.empty || !existUser.empty) { setInvMsg('❌ This email already has access or a pending invite'); setInvSaving(false); return }
+      const [existingInvites, existingUsers] = await Promise.all([
+        getDocs(collection(db,'invites')),
+        getDocs(collection(db,'profiles')),
+      ])
+      const hasInvite = existingInvites.docs.some(d => (d.data().email || '').trim().toLowerCase() === email)
+      const hasUser = existingUsers.docs.some(d => (d.data().email || '').trim().toLowerCase() === email)
+      if (hasInvite || hasUser) { setInvMsg('❌ This email already has access or a pending invite'); setInvSaving(false); return }
 
       await addDoc(collection(db,'invites'),{
-        email, role:invRole, invitedBy:user!.email,
+        email, emailLower:email, role:invRole, invitedBy:user!.email,
         createdAt:new Date().toISOString(), used:false
       })
       setInvites(i=>[...i,{email,role:invRole,used:false}])
